@@ -1,0 +1,30 @@
+// Reproducible tiny local-only render; no downloads, outside footage or added audio.
+import {execFileSync} from 'node:child_process';
+import {mkdir,writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import assert from 'node:assert/strict';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const dir=path.join(root,'test/artifacts/graphics-smoke');await mkdir(dir,{recursive:true});
+const run=(cmd,args,options={})=>execFileSync(cmd,args,{maxBuffer:32*1024*1024,...options});
+const prepared=path.join(dir,'prepared.mp4'), output=path.join(dir,'graphics.mp4');
+run('ffmpeg',['-y','-f','lavfi','-i','color=c=0x244466:s=240x426:r=30:d=2','-c:v','libx264','-pix_fmt','yuv420p',prepared],{stdio:'ignore'});
+// Tiny raster asset exercises staging without SVG / remote requests.
+run('ffmpeg',['-y','-f','lavfi','-i','color=c=0x00cccc:s=32x32:d=0.1','-frames:v','1',path.join(dir,'mark.png')],{stdio:'ignore'});
+const job={videoPath:prepared,outputPath:output,fontPath:process.env.SMOKE_FONT??path.resolve(root,'../backend/fonts/Poppins-ExtraBold.ttf'),width:240,height:426,fps:30,durationInFrames:60,style:'bold',headline:'EXAMPLE',headlineDuration:.5,words:[{text:'Hello',start:.1,end:.4},{text:'world',start:.4,end:.7}],strikeWords:['world'],captionStyle:{keywords:{hello:{color:'#00ffff',scale:1.1,offsetY:-2}},entrance:{scale:.97,translateY:4,duration:.1}},lowerThirds:[{start:.1,end:.8,name:'Example Speaker',title:'Test only',yRatio:.84}],overlays:[{start:.2,end:.8,imagePath:path.join(dir,'mark.png'),xRatio:.8,yRatio:.45,widthRatio:.12},{start:.2,end:.8,text:'Local overlay',yRatio:.6,fontSizeRatio:.03}],endcard:{start:1.5,end:2,text:'End of example',subtitle:'Local smoke test'},transitions:[{time:1,rise:.1,fall:.267}],background:{color:'#101014',fit:'contain'},renderOptions:{crf:25,audioBitrate:'128k',volume:1}};
+await writeFile(path.join(dir,'job.json'),JSON.stringify(job,null,2));
+run(process.execPath,[path.join(root,'render.mjs'),path.join(dir,'job.json')],{stdio:'inherit'});
+run('ffmpeg',['-v','error','-i',output,'-f','null','-'],{stdio:'pipe'});
+const probe=JSON.parse(run('ffprobe',['-v','error','-show_streams','-show_format','-of','json',output]).toString());
+assert.equal(probe.streams[0].nb_frames,'60');assert.equal(probe.streams[0].width,240);
+const frames=run('ffmpeg',['-v','error','-i',output,'-f','rawvideo','-pix_fmt','rgb24','-']);
+const frameBytes=240*426*3;assert.equal(frames.length,frameBytes*60);
+const pixel=(frame,x,y)=>Array.from(frames.subarray(frame*frameBytes+(y*240+x)*3,frame*frameBytes+(y*240+x)*3+3));
+assert(pixel(30,120,210).every(v=>v>245),'Luma must peak white exactly at cut');
+assert(pixel(24,120,210)[2]<150,'Before flash must remain base footage');
+assert(pixel(39,120,210)[2]<150,'After flash must recover base footage');
+assert(pixel(50,120,210)[2]<40,'Endcard must replace footage');
+let bright=0;for(let y=360;y<410;y++)for(let x=20;x<210;x++)if(pixel(10,x,y).every(v=>v>180))bright++;
+assert(bright>30,'Lower-third glyphs must actually render');
+for(const [name,at] of [['lower-third',.33],['luma',1],['endcard',1.7]])run('ffmpeg',['-y','-v','error','-ss',String(at),'-i',output,'-frames:v','1',path.join(dir,`${name}.png`)]);
+const report={output,frames:60,width:240,height:426,fullDecode:true,lumaPeak:pixel(30,120,210),lowerThirdBrightPixels:bright,endcardPixel:pixel(50,120,210),audioStreams:probe.streams.filter(s=>s.codec_type==='audio').length};await writeFile(path.join(dir,'verification.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));

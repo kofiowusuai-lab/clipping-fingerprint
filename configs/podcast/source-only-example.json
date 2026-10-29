@@ -1,0 +1,62 @@
+{
+  "$schema": "./schema.json",
+  "version": 1,
+  "source": {
+    "path": "../../inputs/episode.mp4"
+  },
+  "transcript": {
+    "path": "../../inputs/words.json",
+    "units": "seconds"
+  },
+  "outputDir": "../../outputs/podcast-source-only",
+  "fontPath": "../../backend/fonts/Poppins-ExtraBold.ttf",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "crf": 19,
+  "renderOptions": {
+    "renderOptions": {
+      "crf": 18,
+      "muted": true,
+      "audioBitrate": "192k"
+    }
+  },
+  "clips": [
+    {
+      "id": "source-only-example",
+      "ranges": [
+        [
+          0,
+          10
+        ]
+      ],
+      "shots": [
+        {
+          "rangeIndex": 0,
+          "start": 0,
+          "end": 10,
+          "mode": "contain"
+        }
+      ],
+      "approval": {
+        "approved": false,
+        "reviewer": "",
+        "reviewedAt": ""
+      },
+      "captions": {
+        "style": "bold",
+        "headlineDuration": 3.0,
+        "headlineAccent": "#FFE000",
+        "strikeWords": []
+      },
+      "graphics": {
+        "notes": "Editorial intent only. Supported graphics JS fields go in renderOptions, not here."
+      },
+      "renderOptions": {},
+      "headline": "A SOURCE-SUPPORTED HOOK",
+      "sourceNotes": "UNAPPROVED illustrative ranges only, not a production duration target. Replace with actual inspected ranges and framing. No source/SFX is bundled; captions must match your own speech.",
+      "payoff": "State precisely where this opening question is resolved.",
+      "postCaption": "A truthful standalone post caption. #Podcast #Interview"
+    }
+  ]
+}

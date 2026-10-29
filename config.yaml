@@ -1,0 +1,4 @@
+# Deliberately no model credentials or account-specific routing.
+terminal:
+  backend: local
+  cwd: "."

@@ -1,0 +1,25 @@
+{
+  "scanner": "Trivy 0.76.1",
+  "imageId": "sha256:a97d6b951ea6f6296b5d783003e681975823b413fa1738e52cf9ce25a749d7d5",
+  "policy": {
+    "severity": [
+      "CRITICAL"
+    ],
+    "ignoreUnfixed": true,
+    "scanners": [
+      "vuln"
+    ]
+  },
+  "resultTargets": 3,
+  "fixableCriticalFindings": 0,
+  "exitCode": 0,
+  "confirmationRunNetwork": "none",
+  "database": "freshly downloaded on the preceding scan, cached for confirmation",
+  "suppressedAdvisories": [],
+  "patch": {
+    "@rspack/core": "2.2.9",
+    "bundledTinypool": "2.2.0",
+    "webpack": "5.112.0"
+  },
+  "limitations": "This does not assert zero HIGH/lower or unfixed vulnerabilities; no comprehensive penetration test or full-stack production deployment performed."
+}

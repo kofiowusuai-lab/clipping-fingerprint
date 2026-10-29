@@ -1,0 +1,8 @@
+allowBuilds:
+  esbuild: true
+# Security override: 1.7.x vendors vulnerable tinypool 1.1.1.
+# 2.2.9 includes tinypool 2.2.0; exercise real Remotion smokes after changes.
+overrides:
+  '@rspack/core': 2.2.9
+  # Satisfy the locked schema-utils 4.8.1 peer range without an unpinned install.
+  webpack: 5.112.0

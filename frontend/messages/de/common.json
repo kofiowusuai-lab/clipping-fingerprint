@@ -1,0 +1,23 @@
+{
+  "close": "Schließen",
+  "cancel": "Abbrechen",
+  "save": "Speichern",
+  "saving": "Wird gespeichert…",
+  "loading": "Wird geladen",
+  "tryAgain": "Bitte versuche es erneut.",
+  "justNow": "gerade eben",
+  "copy": {
+    "copied": "In die Zwischenablage kopiert",
+    "manual": "Die Zwischenablage ist blockiert. Der Text ist markiert, damit du ihn manuell kopieren kannst."
+  },
+  "plans": {
+    "free": "Kostenlos",
+    "pro": "Pro",
+    "scale": "Creator",
+    "selfHost": "Selbst gehostet"
+  },
+  "duration": {
+    "hours": "{count, plural, one {# Stunde} other {# Stunden}}",
+    "minutes": "{count, plural, one {# Minute} other {# Minuten}}"
+  }
+}

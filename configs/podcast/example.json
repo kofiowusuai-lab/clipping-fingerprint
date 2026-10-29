@@ -1,0 +1,31 @@
+{
+  "$schema": "./schema.json",
+  "version": 1,
+  "source": {"path": "../../../media/episode.mp4", "url": "https://example.org/episode"},
+  "transcript": {"path": "../../../media/episode.transcript_cache.json", "units": "milliseconds"},
+  "outputDir": "../../outputs/podcast-example",
+  "fontPath": "../../backend/fonts/Poppins-ExtraBold.ttf",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "crf": 19,
+  "renderOptions": {"renderOptions": {"crf": 18, "muted": true, "audioBitrate": "192k"}},
+  "clips": [{
+    "id": "01-example",
+    "ranges": [[10.0, 14.0], [20.0, 26.2]],
+    "shots": [
+      {"rangeIndex": 0, "start": 10.0, "end": 14.0, "mode": "auto"},
+      {"rangeIndex": 1, "start": 20.0, "end": 23.0, "mode": "contain"},
+      {"rangeIndex": 1, "start": 23.0, "end": 26.2, "videoEnd": 26.0, "reviewed": true, "mode": "crop", "crop": {"x": 650, "y": 40, "width": 600, "height": 1066}, "track": [{"time": 0, "x": 650, "y": 40}, {"time": 2.9, "x": 660, "y": 40}]}
+    ],
+    "approval": {"approved": false, "reviewer": "", "reviewedAt": ""},
+    "captions": {"style": "bold", "headlineDuration": 3.0, "headlineAccent": "#FFE000", "strikeWords": []},
+    "graphics": {"notes": "Editorial intent only. Supported graphics JS fields go in renderOptions, not here."},
+    "renderOptions": {},
+    "headline": "A SOURCE-SUPPORTED HOOK",
+    "sourceNotes": "Replace this example with manually reviewed source passages. Reset each shot at source camera cuts. All source and shot times are seconds; track times are shot-relative seconds. videoEnd holds the last good picture through end while audio continues.",
+    "payoff": "State precisely where this opening question is resolved.",
+    "postCaption": "A truthful standalone post caption. #Podcast #Interview",
+    "riser": {"path": "../../outputs/assets/KiJX7agcIns.wav", "crestSeconds": 1.78, "cutSeconds": 4.0, "gain": 0.28, "semanticNote": "Completed opening hook; range boundary, not an arbitrary punch-in"}
+  }]
+}

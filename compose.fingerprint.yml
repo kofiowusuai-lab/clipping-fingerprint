@@ -1,0 +1,22 @@
+services:
+  render:
+    build:
+      context: .
+      dockerfile: Dockerfile.fingerprint
+    image: supoclip-fingerprint:local
+    init: true
+    shm_size: 1gb
+    environment:
+      REMOTION_BROWSER_EXECUTABLE: /usr/bin/chromium
+      FINGERPRINT_FONT: /app/backend/fonts/Poppins-ExtraBold.ttf
+    volumes:
+      - ${FINGERPRINT_OUTPUT_DIR:-./outputs/fingerprint}:/outputs
+      - ${FINGERPRINT_INPUT_DIR:-./inputs}:/inputs:ro
+    # Bind mounts must be writable by uid 10001 (or override user explicitly).
+    # Override command with [podcast, run, --config, /inputs/episode.json],
+    # [creator, --plan, /inputs/creator.json], [remotion, /inputs/job.json], etc.
+    command: [smoke, --output-dir, /outputs/smoke]
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true

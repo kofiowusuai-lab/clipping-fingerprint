@@ -1,0 +1,486 @@
+# Troubleshooting
+
+This guide collects the most common operational issues with SupoClip and how to diagnose them.
+
+## Start Here
+
+When the app is misbehaving, check these first:
+
+```bash
+docker-compose ps
+docker-compose logs -f
+docker-compose logs -f backend
+docker-compose logs -f worker
+```
+
+Also verify:
+
+- `http://localhost:3107` loads
+- `http://localhost:8000/health` responds
+- `http://localhost:8000/docs` opens
+
+### Browser cannot connect to the frontend
+
+Check the published host port with `docker-compose port frontend 3107`.
+The self-hosting template uses `3107`; older `.env` files without
+`FRONTEND_PORT` retain port `3001`. Open the reported port, rather than `3000`.
+`Running` means the container has started; check its health and frontend logs
+if the correct URL still fails.
+
+## Login Says Invalid Origin
+
+Use the exact browser origin for `NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL`,
+including its scheme and port. `localhost` and `127.0.0.1` are different origins.
+The frontend accepts local self-hosted origins on ports 3107 and legacy 3001.
+For another hostname or port, set a comma-separated
+`BETTER_AUTH_TRUSTED_ORIGINS` list of explicit HTTP(S) origins. It does not
+support wildcards. Restart the frontend after changing auth settings; rebuild
+production images after changing `NEXT_PUBLIC_*` values. Configure
+`CORS_ORIGINS` separately for direct browser uploads to the backend.
+
+Keep production's public HTTPS URLs and proxy port. Do not disable origin or
+CSRF checks to make login work. If the error persists, share the browser URL,
+commit, build target, and auth error from `docker compose logs frontend`.
+
+## Services Fail to Start
+
+### Symptom
+
+One or more containers never become healthy.
+
+### Checks
+
+```bash
+docker-compose ps
+docker-compose logs -f backend
+docker-compose logs -f frontend
+docker-compose logs -f postgres
+docker-compose logs -f redis
+```
+
+### Common causes
+
+- Docker Desktop is not running
+- `.env` is missing or incomplete
+- PostgreSQL or Redis failed health checks
+- frontend build-time variables are invalid
+- backend startup is failing because a required key or URL is malformed
+
+### Fixes
+
+- Confirm Docker is running with `docker info`
+- Rebuild after config changes:
+
+```bash
+docker-compose up -d --build
+```
+
+- If the environment is badly out of sync, restart everything:
+
+```bash
+docker-compose down
+docker-compose up -d --build
+```
+
+## Tasks Stay Queued Forever
+
+### Symptom
+
+Task creation succeeds, but progress never moves beyond `queued`.
+
+### Most likely causes
+
+- Worker container is not running
+- Redis is unavailable
+- Worker cannot reach backend dependencies
+- Task timed out in queue handling
+
+### Checks
+
+```bash
+docker-compose logs -f worker
+docker-compose logs -f redis
+docker-compose ps
+curl -f http://localhost:8000/health/worker
+```
+
+Also inspect:
+
+- task status in the UI
+- backend progress endpoint behavior
+- `QUEUED_TASK_TIMEOUT_SECONDS`
+
+### Fixes
+
+- Start or restart the worker
+- Confirm Redis is healthy
+- Confirm the worker is healthy, not merely running. Its ARQ heartbeat expires
+  after roughly 31 seconds without an update. `/health/worker` returns 503
+  when it is missing or Redis cannot be reached.
+- Confirm the task was actually enqueued
+- Review worker exceptions around download, transcription, or rendering
+
+### Processing stays at 30% or 50%
+
+At 30%, inspect backend/worker logs for transcription; at 50%, inspect them for
+AI analysis. Repeated frontend GET requests returning 200 do not establish
+processing progress. Include video duration, selected providers, commit, and
+the task's actual error when reporting a remaining stall.
+
+AssemblyAI status polling uses one budget based on
+`ASSEMBLY_AI_HTTP_TIMEOUT_SECONDS` after submission, with each status request
+bounded to 30 seconds or the remaining budget. A poll timeout retries the same
+transcript rather than submitting another paid job. Upload requests still use
+the configured HTTP timeout. Increase the setting for long media only after
+checking the logs. AI analysis already has a 600-second overall budget and
+up to three attempts for transient provider/network errors.
+
+## Backend Starts But Clip Generation Fails
+
+### Symptom
+
+Tasks begin processing and then move to `error`.
+
+### Common causes
+
+- Invalid API key
+- LLM/provider mismatch
+- YouTube download issue
+- AssemblyAI failure
+- FFmpeg or media-processing dependency issue
+- Rendering failure caused by fonts or clip options
+
+### Checks
+
+```bash
+docker-compose logs -f backend
+docker-compose logs -f worker
+```
+
+Verify:
+
+- `ASSEMBLY_AI_API_KEY` is set
+- `LLM` matches the provider key you supplied
+- The provider account is active and has quota
+
+### Provider mismatch examples
+
+- `LLM=openai:...` requires `OPENAI_API_KEY`
+- `LLM=google-gla:...` requires `GOOGLE_API_KEY`
+- `LLM=anthropic:...` requires `ANTHROPIC_API_KEY`
+- `LLM=ollama:...` requires a reachable Ollama endpoint
+
+## YouTube length check times out
+
+### Symptom
+
+Submitting a public YouTube URL fails before a task exists. The message is
+"Checking this YouTube video's length timed out." The API returns HTTP 503
+with code `VIDEO_METADATA_TIMEOUT`. No minutes are used.
+
+### Common causes
+
+- The metadata lookup exceeded `YOUTUBE_PREFLIGHT_TIMEOUT_SECONDS` (default 30).
+- On Apple Silicon, `BACKEND_PLATFORM=linux/amd64` runs the backend under
+  emulation. yt-dlp's deno step alone can take about 15 seconds, so the check
+  passes or fails depending on the run.
+- A timed-out lookup can keep running in the background until yt-dlp exits.
+  The next attempt still starts its own check.
+
+### Fixes
+
+- Set `YOUTUBE_PREFLIGHT_TIMEOUT_SECONDS` higher (for example `60`) and restart
+  the backend. Values above 180 are capped. Blank or invalid values use 30.
+- On an arm64 host, set `BACKEND_PLATFORM=linux/arm64` and
+  `BACKEND_CPU_ONLY=true`, then rebuild:
+
+```bash
+docker compose up -d --build backend worker
+```
+
+GPU hosts should keep `BACKEND_PLATFORM=linux/amd64`. A native arm64 image is
+optional and does not enable Apple GPU acceleration.
+
+## YouTube Downloads Fail
+
+### Symptom
+
+YouTube tasks error early or cannot fetch source media.
+
+### Common causes
+
+- Expired or invalid cookies
+- YouTube anti-bot restrictions
+- Network restrictions
+- Apify actor failures or missing `APIFY_API_TOKEN`
+- `yt-dlp` fallback edge-case changes
+
+### Checks
+
+- Review backend and worker logs
+- Confirm `APIFY_API_TOKEN` is set if you expect the primary download path to use Apify
+- Confirm `APIFY_YOUTUBE_DEFAULT_QUALITY` is one of `360`, `480`, `720`, or `1080`
+
+### Fixes
+
+- Verify the source URL is publicly reachable by either Apify or plain `yt-dlp`
+- Retry with `APIFY_API_TOKEN` configured if the direct `yt-dlp` fallback is being rate-limited
+
+## Frontend Loads But Shows Errors
+
+### Symptom
+
+The UI opens, but parts of it fail to load or authenticated actions do not work.
+
+### Common causes
+
+- Backend unreachable from frontend
+- `NEXT_PUBLIC_API_URL` is wrong
+- auth secret or origin mismatch
+- database/auth tables not initialized
+
+### Checks
+
+- Browser network tab
+- frontend logs
+- backend logs
+- Better Auth configuration in `frontend/src/lib/auth.ts`
+
+### Fixes
+
+- Confirm `NEXT_PUBLIC_API_URL` points to the backend
+- Confirm `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are correct
+- Confirm trusted origins include your actual frontend URL
+
+## Cannot Sign In or Sign Up
+
+### Common causes
+
+- Database not ready
+- Better Auth misconfiguration
+- `DISABLE_SIGN_UP=true`
+- Cookies blocked by wrong origin or protocol setup
+
+### Checks
+
+- Inspect frontend auth route behavior
+- Verify users/session tables exist in PostgreSQL
+- Verify app URL and auth URL match your active hostname
+
+## Fonts Are Missing or Upload Fails
+
+### Symptom
+
+Font picker is empty, custom fonts do not appear, or font upload fails.
+
+### Checks
+
+- Verify `backend/fonts/` contains valid `.ttf` or `.otf` files
+- Verify `GET /fonts` returns entries
+- Check backend logs for font registry or upload errors
+
+### Hosted-mode note
+
+Some font upload behavior can differ when monetization is enabled, so verify whether you are in self-host or hosted mode.
+
+### Fixes
+
+- Add font files to `backend/fonts/`
+- Rebuild or restart if the mount or registry state is stale
+- Confirm the frontend is calling `/api/fonts` successfully
+
+## Caption Templates or B-roll Are Missing
+
+### Caption templates
+
+If templates are missing:
+
+- check `GET /caption-templates`
+- inspect backend logs
+- verify template definitions are still valid
+
+### B-roll
+
+If B-roll is unavailable:
+
+- confirm `PEXELS_API_KEY` is set
+- check `GET /broll/status`
+- confirm the provider account has not been rate-limited or disabled (worker logs say `Pexels rate limit reached`; searches pause until the quota resets)
+- a clip with no concrete, filmable subject legitimately gets no cutaways; the worker logs `No B-roll moments in this clip`
+
+## Billing or Subscription Flow Is Broken
+
+### Symptom
+
+Checkout, portal access, billing summary, or subscription emails do not work.
+
+### Checks
+
+- Confirm `SELF_HOST=false`
+- Confirm Stripe keys are set
+- Confirm `STRIPE_PRICE_ID` is valid
+- Confirm `BACKEND_AUTH_SECRET` is set
+- Confirm `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `SES_FROM_EMAIL` are configured
+
+### Webhook checks
+
+- Verify Stripe is sending events to the frontend webhook route
+- Confirm webhook signature validation succeeds
+- Confirm the database can persist webhook event records
+
+### Email checks
+
+- Confirm the sender domain is verified in Amazon SES
+- Check backend logs for subscription email errors
+
+## Email Verification and SES Complaints
+
+API-key creation requires email verification. Request a link in **Agents & API**;
+links expire after one hour, and invalid or expired links can be replaced there.
+Check the SES settings above and the backend's verification-email errors when
+links do not arrive. Better Auth rate-limits verification requests and logs
+delivery callback failures; a successful request does not prove inbox delivery.
+Ordinary signup and sign-in do not automatically send verification mail.
+
+All successful SES send requests now record `message_id`, `recipient`, `subject`,
+`region` and `sent_at` in `email_deliveries`. Apply the Prisma migrations before
+rolling out the application; the backend also applies an idempotent matching SQL
+migration at startup. There is no new SES permission or environment variable.
+This records SES acceptance, not delivery. Bodies, passwords, keys and link tokens
+are never stored in the audit table. Access should be restricted like other
+customer data; these records remain until explicitly deleted by an operator.
+
+Use the original SES Message-ID from a complaint report to look up its recipient:
+
+```sql
+SELECT recipient, subject, region, sent_at
+FROM email_deliveries
+WHERE message_id = '<SES message ID>';
+```
+
+Messages sent before this migration have no audit record. If persistence fails
+after SES accepts a message, backend logs contain the correlation metadata under
+`SES audit persistence failed`; the app does not retry an already accepted send.
+Check complaint rates and account-level suppression in the sender's AWS region.
+This change does not add an SNS complaint handler or alter SES suppression.
+
+## Database Problems
+
+### Symptom
+
+Auth, tasks, or admin pages fail with database errors.
+
+### Checks
+
+- Confirm PostgreSQL container health
+- Confirm the init script ran
+- Confirm the app is using the same connection string you expect
+
+### Fixes
+
+If the database is disposable and you want a clean reset:
+
+```bash
+docker-compose down -v
+docker-compose up -d --build
+```
+
+Warning: this deletes persisted data.
+
+## Redis Problems
+
+### Symptom
+
+Queueing, progress updates, or worker behavior break.
+
+### Checks
+
+```bash
+docker-compose logs -f redis
+docker-compose exec redis redis-cli ping
+```
+
+If Redis is unavailable, task creation may still appear to work while background processing does not.
+
+## Performance Is Poor
+
+### Common causes
+
+- Large or long source videos
+- Slow external providers
+- Resource constraints on your machine
+- Too aggressive clip generation settings
+
+### Practical mitigations
+
+- Keep `DEFAULT_PROCESSING_MODE=fast`
+- Lower `FAST_MODE_MAX_CLIPS`
+- Use a lighter model where acceptable
+- Avoid enabling B-roll unless needed
+- Watch `GET /tasks/metrics/performance` for aggregate timing
+
+## Task Detail Page Never Finishes Refreshing
+
+### Symptom
+
+The task page shows progress, but completed clips do not appear.
+
+### Checks
+
+- Verify `GET /tasks/{task_id}` returns `completed`
+- Verify `GET /tasks/{task_id}/clips` returns clip data
+- Check browser network logs for failed proxy requests
+- Check whether the SSE stream ended normally
+
+## Admin Features Do Not Work
+
+### Common causes
+
+- User is not marked `is_admin`
+- frontend auth state is stale
+- backend admin routes are blocked by auth or proxy configuration
+
+### Checks
+
+- Confirm the admin page is loading with an admin session
+- Confirm user records in PostgreSQL have `is_admin=true`
+- Confirm frontend admin proxy routes respond
+
+## Recovery Playbook
+
+If you just need to get back to a known good local state:
+
+1. Stop the stack.
+
+```bash
+docker-compose down
+```
+
+2. Review `.env`.
+3. Rebuild and restart.
+
+```bash
+docker-compose up -d --build
+```
+
+4. If needed, reset volumes.
+
+```bash
+docker-compose down -v
+docker-compose up -d --build
+```
+
+## What to Collect Before Filing an Issue
+
+- Exact command you ran
+- `.env` values involved, with secrets redacted
+- Browser error message
+- Relevant `backend` and `worker` logs
+- Whether the problem happens for YouTube, uploads, or both
+- Whether `SELF_HOST` is `true` or `false`
+
+## Related Reading
+
+- [Setup](./setup.md)
+- [Configuration](./configuration.md)
+- [Architecture](./architecture.md)

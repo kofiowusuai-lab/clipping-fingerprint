@@ -1,0 +1,16 @@
+{
+  "clean-energy": {
+    "caption": {"position": 0.72, "maxWords": 1, "fontSizeRatio": 0.078, "color": "#ffffff", "highlight": "#d8ff36"},
+    "intensity": 0.55,
+    "emphasis": {"pop": 0.12, "translateYRatio": 0.008, "duration": 0.16, "easing": "smoothstep"},
+    "strokeRatio": 0.006,
+    "headlineSizeRatio": 0.074
+  },
+  "aggressive": {
+    "caption": {"position": 0.70, "maxWords": 1, "fontSizeRatio": 0.086, "color": "#ffffff", "highlight": "#ffcf24"},
+    "intensity": 0.85,
+    "emphasis": {"pop": 0.24, "translateYRatio": 0.014, "duration": 0.14, "easing": "cubic-out"},
+    "strokeRatio": 0.008,
+    "headlineSizeRatio": 0.082
+  }
+}

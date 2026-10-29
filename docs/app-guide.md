@@ -1,0 +1,340 @@
+# App Guide
+
+This guide explains the visible parts of SupoClip and the main user flows.
+
+## Product Summary
+
+SupoClip turns long-form videos into short clips. Users can:
+
+- Submit a YouTube, Twitch, or Kick URL
+- Upload a video file
+- Customize subtitles and styling
+- Track processing progress in real time
+- Review and edit generated clips
+- Download clips for publishing
+
+Depending on configuration, users may also see hosted billing, usage limits, or admin tooling.
+
+## Main Screens
+
+### Home: `/`
+
+The homepage is the main task creation screen.
+
+Core behaviors:
+
+- Accepts a YouTube, Twitch, or Kick URL, or an uploaded file
+- Shows the matching source icon for a recognised URL, and a YouTube thumbnail preview when a YouTube URL can be parsed
+- Lets users set clip styling defaults before submission
+- Starts the job and transitions the user into task tracking
+
+Available creation options on this screen include:
+
+- Source type
+  - YouTube, Twitch, or Kick link
+  - Upload
+- Clip length: Auto (15–60s), Short (15–30s), Medium (30–60s), or Long (1–2 min). The choice is saved to your account as the default for new videos. These are target lengths before removing pauses and filler words.
+- Font family
+- Font size
+- Font color
+- Caption template
+- Include B-roll
+- Output format
+  - `vertical`
+  - `original`
+- Subtitle toggle
+
+Additional behavior:
+
+- Loads available fonts from the backend
+- Loads caption templates from the backend
+- Checks whether B-roll is configured
+- Loads the latest task for the signed-in user
+- Loads billing summary when monetization is enabled
+
+If landing-only mode is enabled, the homepage can act more like a marketing shell than the full product workspace.
+
+### Task List: `/list`
+
+The task list is the user’s history and control center.
+
+Users can:
+
+- View all tasks
+- See status at a glance
+- Select multiple tasks
+- Cancel active tasks
+- Resume errored or cancelled tasks
+- Delete tasks in bulk
+
+Status states used across the UI include:
+
+- `queued`
+- `processing`
+- `completed`
+- `error`
+- `cancelled`
+
+### Task Detail: `/tasks/[id]`
+
+This is the main post-submission workspace.
+
+When a task is still running:
+
+- The page connects to Server-Sent Events on `GET /tasks/{id}/progress`
+- Progress updates appear in real time
+- The page refreshes when processing completes
+
+When a task is completed:
+
+- Generated clips are displayed
+- Users can preview videos
+- Virality scores and reasoning are visible
+- Users can edit, split, merge, regenerate, and export clips
+
+Editing actions exposed in the UI map to backend operations:
+
+- Rename or update task metadata
+- Delete a clip
+- Trim a clip
+- Split a clip at a chosen timestamp
+- Merge selected clips
+- Update captions
+- Regenerate a clip
+- Apply project-wide style settings to a task
+- Export with a platform preset such as TikTok
+
+### Clip Studio: `/tasks/[id]/edit`
+
+The clip studio provides a live canvas preview, thumbnail/audio timeline, reversible
+segment editing, timed caption corrections, crop and aspect controls, audio gain,
+and video effects. Drafts autosave without replacing generated originals.
+Background and browser exports are available, along with batch export and combining
+drafts into a new clip. See [Clip studio](./editor.md) for shortcuts, persistence,
+export compatibility, and deployment details.
+
+### Settings: `/settings`
+
+The settings page stores user defaults and exposes billing actions when monetization is enabled.
+
+Users can:
+
+- Set default font family
+- Set default font size
+- Set default font color
+- Open checkout or billing portal flows
+- Sign out
+
+The page also loads billing summary data so the user can see plan and usage information.
+
+### Social Accounts: `/settings/social`
+
+Users connect their own YouTube, TikTok and Instagram accounts here. The page
+shows which platforms the server has configured, the connected accounts (with a
+reconnect prompt when a token stops working), and the performance loop:
+views, likes, comments and shares per platform, per hook type and per clip
+length, plus the top-performing clips. Once enough posts have metrics, clip
+selection for new tasks is personalized with that history.
+
+### Auth Screens
+
+- `/sign-in`
+- `/sign-up`
+
+SupoClip uses Better Auth with an email and password flow backed by PostgreSQL through Prisma.
+
+If `DISABLE_SIGN_UP=true`, sign-up is disabled for new users.
+
+### Admin Dashboard: `/admin`
+
+The admin area is available to users with `is_admin=true`.
+
+It includes:
+
+- User counts and platform metrics
+- Active task visibility
+- Recent generations
+- Per-user generation stats
+- Admin status toggles for users
+- YouTube auth management tools
+
+### Feedback
+
+The app includes feedback submission plumbing via frontend API routes and backend handling. This can be wired to Discord webhooks when configured.
+
+## Core User Workflows
+
+### 1. Create a task
+
+1. Sign in.
+2. Open `/`.
+3. Paste a YouTube, Twitch, or Kick link, or attach a file.
+4. Configure caption and styling preferences.
+5. Submit the task.
+
+The frontend sends the request through its authenticated API routes, and the backend creates a task record plus a queued background job.
+
+### 2. Monitor progress
+
+1. Open the task page.
+2. Watch live progress from the backend SSE stream.
+3. Wait for the status to move from `queued` to `processing` to `completed`.
+
+### 3. Review clips
+
+Once completed, the task page shows:
+
+- Clip duration
+- Transcript excerpt
+- AI reasoning
+- Virality scoring
+- Video preview and download access
+
+### 4. Edit clips
+
+Users can refine clips after generation:
+
+- Trim start or end offsets
+- Split long clips into smaller ones
+- Merge multiple clips
+- Rewrite captions
+- Reapply task-wide subtitle styling
+- Export platform-specific versions
+
+### 5. Manage billing
+
+If monetization is enabled:
+
+- Free and paid-plan limits can affect whether task creation is allowed
+- The homepage and settings page surface billing state
+- Users can open checkout or the customer portal from the frontend
+
+### 6. Publish clips
+
+On a completed task, every clip has a **Publish** button. The publish sheet lets
+the user pick a connected account, edit the title, caption and hashtags, choose
+visibility, and either post immediately or schedule a time. Posts appear under
+the clip with their status, a link to the live post, and metrics once they are
+pulled back (hourly, or on demand with the refresh button). Failed posts can be
+retried; scheduled ones can be cancelled.
+
+## Supported Inputs
+
+### YouTube
+
+The app can accept standard YouTube URLs, including:
+
+- `youtube.com/watch?v=...`
+- `youtu.be/...`
+- Embed-style YouTube links
+
+The system attempts to extract the video ID on the frontend for previews and on the backend for downloading.
+
+### Twitch and Kick
+
+The app accepts Twitch VODs (`twitch.tv/videos/...`) and clips (`clips.twitch.tv/...` or `twitch.tv/<channel>/clip/...`), and Kick VODs (`kick.com/<channel>/videos/...` or `kick.com/video/...`) and clips (`kick.com/<channel>/clips/clip_...` or `kick.com/<channel>?clip=clip_...`). Live channel pages are rejected with a hint to use a VOD or clip instead.
+
+The backend tries the proxy, then a direct `yt-dlp` download, then optional Apify fallbacks. See [Twitch and Kick imports](./configuration.md#twitch-and-kick-imports) for the provider settings.
+
+### File upload
+
+Users can upload local video files through the frontend upload API. The backend stores the upload in the temporary working area before processing.
+
+## Customization Features
+
+### Fonts
+
+Available fonts come from backend-managed files. The frontend fetches the list from `/api/fonts`.
+
+Custom font upload is also supported through the media API. In monetized setups, access rules may differ from self-host mode.
+
+### Caption templates
+
+Caption templates are exposed by the backend and loaded into the frontend task creation and editing flows.
+
+### B-roll
+
+B-roll is optional and depends on `PEXELS_API_KEY`. The composer only shows the **B-roll** toggle when `GET /broll/status` reports it as configured.
+
+With B-roll on, each rendered clip gets its own plan (`backend/src/broll.py`):
+
+1. The LLM reads the clip's word-timed transcript and picks up to one cutaway per ~12 seconds, only where the speaker names something filmable. It never covers the first 3 seconds, the last second, or a moment where the speaker points at the screen ("like this").
+2. Each cue is snapped to the spoken word, then sourced from Pexels (portrait for vertical clips) at the smallest rendition that covers the clip's resolution, without reusing footage within a task.
+3. The renderer dissolves the footage over the framed picture in the same ffmpeg pass that burns captions, so captions and the hook title stay on top (`media/broll_overlay.py`).
+
+Placements are stored on the clip's `.source_map.json` sidecar (`broll`, in clip seconds). Caption edits and "apply settings" regenerations re-use them; trims, splits and merges shift them. Recomputed pause/filler cleanup re-plans. Clips exported from the clip studio are rebuilt from the source and do not include B-roll yet; the generated clip keeps it. Footage is cached under `{TEMP_DIR}/broll_cache` (unused for 24 hours or over 2 GB is pruned, and is re-downloaded on demand). If planning, Pexels or a download fails, the clip renders without B-roll.
+
+### Output format
+
+The home screen exposes at least:
+
+- Vertical output
+- Original-aspect output
+
+The rendering path then uses backend processing rules to produce the final clip file.
+
+## Hosted Versus Self-Hosted Behavior
+
+### Self-host mode
+
+When `SELF_HOST=true`:
+
+- Monetization is disabled
+- Billing-related friction is minimized
+- The app behaves like an open-source self-hosted tool
+
+### Hosted mode
+
+When `SELF_HOST=false`:
+
+- Billing summary endpoints matter
+- Usage limits can block new task creation
+- Stripe checkout and portal flows are active
+- Subscription emails can be sent via Amazon SES
+
+## User Roles
+
+### Standard user
+
+Can:
+
+- Sign in
+- Create and manage their own tasks
+- Edit and export their own clips
+- Save personal style defaults
+
+### Admin user
+
+Can also:
+
+- Access `/admin`
+- Promote or demote admin status for other users
+- Monitor global task activity
+
+## Announcements
+
+The landing-page badge and the app's "What's new" button open the same announcement panel. In the app, the button is in the desktop sidebar and the mobile header. Opening the panel clears its unread badge; the updates remain available afterward.
+
+Admins manage announcements at `/admin/announcements`, linked from the admin dashboard. Create a draft, edit its title, description, destination path and link label, then publish it or choose a future publication date to schedule it. Hide an announcement to remove it from both surfaces. Announcements live in the PostgreSQL `announcements` table; publishing does not require a code change or deployment. Active pages refresh announcements each minute and when the tab regains focus.
+
+Deploy the Prisma migration `20261011140000_add_announcements` before deploying the frontend. It creates the table and seeds the existing creator-program announcement with the same ID, preserving read status. `init.sql` also includes the table for new installations.
+
+Read status is stored in the browser, separately for anonymous visitors and each signed-in account. It does not sync between devices. If storage is blocked, read status lasts for the current visit.
+
+## Practical Support Notes
+
+If a user says:
+
+- "My clips never show up"
+  - Check worker health, Redis, and task status
+- "I can’t see my fonts"
+  - Check `/api/fonts`, mounted font files, and auth mode
+- "I can’t create new tasks"
+  - Check billing summary, plan limits, and API keys
+
+## Related Reading
+
+- [Setup](./setup.md)
+- [Architecture](./architecture.md)
+- [API Reference](./api-reference.md)
+- [Troubleshooting](./troubleshooting.md)

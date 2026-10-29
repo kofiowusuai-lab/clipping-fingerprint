@@ -1,0 +1,23 @@
+{
+  "close": "Cerrar",
+  "cancel": "Cancelar",
+  "save": "Guardar",
+  "saving": "Guardando…",
+  "loading": "Cargando",
+  "tryAgain": "Inténtalo de nuevo.",
+  "justNow": "ahora mismo",
+  "copy": {
+    "copied": "Copiado al portapapeles",
+    "manual": "El portapapeles está bloqueado. El texto está seleccionado para que lo copies manualmente."
+  },
+  "plans": {
+    "free": "Gratis",
+    "pro": "Pro",
+    "scale": "Creator",
+    "selfHost": "Autohospedado"
+  },
+  "duration": {
+    "hours": "{count, plural, one {# hora} other {# horas}}",
+    "minutes": "{count, plural, one {# minuto} other {# minutos}}"
+  }
+}

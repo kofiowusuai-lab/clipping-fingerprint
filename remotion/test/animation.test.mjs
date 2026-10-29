@@ -1,0 +1,15 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import ts from 'typescript';
+import {validateJob} from '../schema.mjs';
+const source=await readFile(new URL('../src/animation.ts',import.meta.url),'utf8');
+const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
+const {wordEnvelope,entranceEnvelope}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+test('keyword envelope eases in/out continuously over 80ms',()=>{assert.equal(wordEnvelope(1,1,2),0);assert.equal(wordEnvelope(1.04,1,2).toFixed(5),'0.50000');assert.equal(wordEnvelope(1.5,1,2),1);assert.equal(wordEnvelope(1.96,1,2).toFixed(5),'0.50000');assert.equal(wordEnvelope(2,1,2),0);assert.equal(wordEnvelope(.9,1,2),0);});
+test('short-word easing is constrained to half duration',()=>{assert.equal(wordEnvelope(.02,0,.04),1);assert.equal(wordEnvelope(.01,0,.04),.5);assert.equal(wordEnvelope(.04,0,.04),0);});
+test('lower-third entrance smoothstep supports disable and short intervals',()=>{assert.equal(entranceEnvelope(0,0,1),0);assert.equal(entranceEnvelope(.075,0,1),.5);assert.equal(entranceEnvelope(.2,0,1),1);assert.equal(entranceEnvelope(0,0,1,0),1);assert.equal(entranceEnvelope(.025,0,.05),.5);});
+const job=()=>({videoPath:'/v.mp4',fontPath:'/f.ttf',outputPath:'/o.mp4',style:'bold',headline:'',headlineDuration:3,width:720,height:1280,fps:30,durationInFrames:90,words:[]});
+test('accepts 100 strike targets and configurable strike treatment',()=>{const j=job();j.strikeWords=Array(100).fill('word');j.captionStyle={strikeColor:'#ff4148',strikeDuration:.22,strikeWidth:7.5,keywordEaseDuration:.08};assert.equal(validateJob(j).strikeWords.length,100);});
+for(const [key,val] of [['strikeColor','red'],['strikeDuration',0],['strikeWidth',Infinity],['keywordEaseDuration',0]])test(`rejects bad ${key}`,()=>assert.throws(()=>validateJob({...job(),captionStyle:{[key]:val}})));
+test('validates lower-third entrance range',()=>{const j={...job(),lowerThirds:[{start:0,end:1,name:'Example',entranceDuration:0}]};assert.equal(validateJob(j).lowerThirds[0].entranceDuration,0);j.lowerThirds[0].entranceDuration=3;assert.throws(()=>validateJob(j));});

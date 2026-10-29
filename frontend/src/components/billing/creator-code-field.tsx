@@ -1,0 +1,98 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
+import { Loader2 } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  captureCreatorCodeFromUrl,
+  clearCreatorCode,
+  lookupCreatorCode,
+  storeCreatorCode,
+} from "@/lib/creator-code";
+import { cn } from "@/lib/utils";
+
+/** "Have a creator code?" for new subscribers; the code is applied by startUpgrade. */
+export function CreatorCodeField({ className }: { className?: string }) {
+  const t = useTranslations("billing");
+  const [applied, setApplied] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [isChecking, setIsChecking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void captureCreatorCodeFromUrl().then(setApplied);
+  }, []);
+
+  const apply = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsChecking(true);
+    setError(null);
+    const code = await lookupCreatorCode(value);
+    setIsChecking(false);
+    if (!code) {
+      setError(t("creatorCode.invalid"));
+      return;
+    }
+    storeCreatorCode(code);
+    setApplied(code);
+    setIsOpen(false);
+    setValue("");
+  };
+
+  if (applied) {
+    return (
+      <p className={cn("text-xs text-muted-foreground", className)}>
+        {t.rich("creatorCode.applied", {
+          code: applied,
+          mono: (chunks) => <span className="font-mono font-medium text-foreground">{chunks}</span>,
+        })}{" "}
+        <button
+          type="button"
+          className="underline underline-offset-2 hover:text-foreground"
+          onClick={() => {
+            clearCreatorCode();
+            setApplied(null);
+          }}
+        >
+          {t("creatorCode.remove")}
+        </button>
+      </p>
+    );
+  }
+
+  if (!isOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className={cn("text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline", className)}
+      >
+        {t("creatorCode.prompt")}
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={apply} className={cn("space-y-1.5", className)}>
+      <div className="flex gap-2">
+        <Input
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder={t("creatorCode.placeholder")}
+          aria-label={t("creatorCode.placeholder")}
+          maxLength={20}
+          autoFocus
+          className="h-8 font-mono text-sm uppercase"
+        />
+        <Button type="submit" size="sm" variant="outline" disabled={!value.trim() || isChecking}>
+          {isChecking ? <Loader2 className="size-3.5 animate-spin" /> : t("creatorCode.apply")}
+        </Button>
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </form>
+  );
+}

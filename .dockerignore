@@ -1,0 +1,33 @@
+# Safe shared build context for the fingerprint and inherited app Dockerfiles.
+# Keep backend/scripts available: fingerprint rendering COPYs both explicitly.
+.git
+.github
+.local
+outputs
+output
+inputs
+node_modules
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.next
+**/coverage
+**/dist
+**/*.pyc
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+**/.DS_Store
+**/*.log
+**/*.mp4
+**/*.wav
+**/*.mp3
+**/*.db
+**/*.db-*
+**/auth.json
+**/memories
+**/sessions
+**/.task-monitor-id
+remotion/test/artifacts
+backend/fonts/THEBOLDFONT.ttf

@@ -1,0 +1,9 @@
+# Rendering only: no API server, ASR, torch or model downloads.
+# OpenCV is used by the existing creator_engine technical QA/contact sheets.
+numpy==2.4.4
+Pillow==13.0.0
+opencv-python-headless==4.13.0.92
+# Optional API/MCP bridge is separate from rendering (run from repository root):
+# python -m pip install python-dotenv==1.2.2 -e ./mcp
+# This installs the local MCP package and its declared API client dependencies,
+# not the full SupoClip backend, Whisper, torch or any model checkpoints.

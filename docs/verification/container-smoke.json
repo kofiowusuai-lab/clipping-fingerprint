@@ -1,0 +1,47 @@
+{
+  "synthetic": true,
+  "editorialQC": "NOT PERFORMED; test pattern, tone and invented test labels, not speech",
+  "deliveryReady": false,
+  "fontPath": "backend/fonts/Poppins-ExtraBold.ttf",
+  "status": "passed",
+  "outputs": {
+    "creator": {
+      "path": "creator/final.mp4",
+      "frames": 72,
+      "width": 360,
+      "height": 640,
+      "duration": 2.4,
+      "fullDecode": "passed",
+      "sha256": "bdaf534a7e6013fa2641d7f461745eeb2f4e1f3e9f09d2fc3c38cb8e81b5766e"
+    },
+    "podcast": {
+      "path": "podcast/synthetic/final.mp4",
+      "frames": 72,
+      "width": 360,
+      "height": 640,
+      "duration": 2.4,
+      "fullDecode": "passed",
+      "sha256": "1e2afc8473750250913a42a71daf4085f37942262ee7303490043b927ce6f5b3"
+    }
+  },
+  "creatorHeroPixelDeltas": [
+    119.53290820343253,
+    121.49559124547315,
+    120.97850732168162
+  ],
+  "creatorCaptionMaxWords": 1,
+  "creatorCaptionPixelDeltas": [
+    121.3697043999455,
+    123.25194071983063,
+    121.58093041138024,
+    138.15971014492754
+  ],
+  "creatorAllFrameCheck": "passed",
+  "creatorBrowserCaptures": 2,
+  "podcastResume": "passed",
+  "podcastAllFrameCheck": "passed",
+  "imageId": "sha256:a97d6b951ea6f6296b5d783003e681975823b413fa1738e52cf9ce25a749d7d5",
+  "platform": "linux/arm64",
+  "network": "none",
+  "user": "renderer"
+}

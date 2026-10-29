@@ -1,0 +1,16 @@
+name: clipping-fingerprint
+version: 1.0.0
+hermes_requires: ">=0.21.0"
+description: "Source-grounded creator and podcast clipping agent with FFmpeg/Remotion renderers and verified QA"
+author: "kofiowusuai-lab"
+license: "AGPL-3.0-or-later"
+distribution_owned:
+  - SOUL.md
+  - skills/
+env_requires:
+  - name: SUPOCLIP_API_KEY
+    description: "Optional: your own self-hosted SupoClip API key; signed headers are also supported"
+    required: false
+  - name: TELEGRAM_BOT_TOKEN
+    description: "Optional: your own Telegram bot token for verified delivery"
+    required: false

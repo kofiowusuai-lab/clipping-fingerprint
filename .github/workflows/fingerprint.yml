@@ -1,0 +1,27 @@
+name: Fingerprint verification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  render-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit publish set
+        run: python scripts/audit_fingerprint.py
+      - name: Build rendering image
+        run: docker build -f Dockerfile.fingerprint -t clipping-fingerprint:ci .
+      - name: Reject fixable critical vulnerabilities in the final rendering image
+        run: >-
+          docker run --rm
+          --volume /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.76.1 image
+          --scanners vuln --severity CRITICAL --ignore-unfixed
+          --exit-code 1 --timeout 15m
+          clipping-fingerprint:ci
+      - name: Render synthetic creator and podcast without runtime network
+        run: docker run --rm --network none --shm-size 1g clipping-fingerprint:ci
+# Manual-only: inherited upstream deployment workflows are not published.
+# No credentials, cloud deploys, real source downloads or model downloads.

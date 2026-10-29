@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,writeFileSync,linkSync,rmSync} from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {validateJob} from '../schema.mjs';
+const job=()=>({videoPath:'/clip.mp4',outputPath:'/out.mp4',fontPath:'/font.ttf',style:'clean',headline:'',headlineDuration:3,width:720,height:1280,fps:30,durationInFrames:90,words:[]});
+test('rejects output replacing primary input',()=>assert.throws(()=>validateJob({...job(),outputPath:'/clip.mp4'}),/overwrite/));
+test('rejects output replacing graphic asset',()=>assert.throws(()=>validateJob({...job(),outputPath:'/logo.png',overlays:[{start:0,end:1,imagePath:'/logo.png'}]}),/overwrite/));
+test('rejects hardlink output alias',()=>{const dir=mkdtempSync(path.join(os.tmpdir(),'asset-safety-'));try{const a=path.join(dir,'in.mp4'),b=path.join(dir,'out.mp4');writeFileSync(a,'fixture');linkSync(a,b);assert.throws(()=>validateJob({...job(),videoPath:a,outputPath:b}),/overwrite/);}finally{rmSync(dir,{recursive:true,force:true});}});

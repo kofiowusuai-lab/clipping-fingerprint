@@ -1,0 +1,32 @@
+# Rendering-only image. Build requires dependency downloads, rendering does not.
+# Update base pins/dependency pins deliberately and scan the final image before deployment.
+FROM node:22.23.4-bookworm-slim AS node
+FROM python:3.11.17-slim-trixie
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg chromium ca-certificates fontconfig fonts-noto-color-emoji \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install --global pnpm@11.24.0
+WORKDIR /app
+ENV REMOTION_BROWSER_EXECUTABLE=/usr/bin/chromium \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY requirements-fingerprint.txt ./
+RUN pip install --no-cache-dir -r requirements-fingerprint.txt
+COPY remotion/package.json remotion/pnpm-lock.yaml remotion/pnpm-workspace.yaml remotion/tsconfig.json ./remotion/
+RUN cd remotion && pnpm install --frozen-lockfile
+# Explicit render surface only: do not COPY outputs, credentials, Hermes profiles or host symlinks.
+COPY remotion/src ./remotion/src
+COPY remotion/*.mjs ./remotion/
+COPY configs ./configs
+COPY backend/fonts ./backend/fonts
+COPY scripts/*.py ./scripts/
+COPY fingerprint.lock.json ./
+RUN useradd --create-home --uid 10001 renderer \
+ && mkdir -p /outputs /app/remotion/node_modules/.cache /app/.cache \
+ && chown -R renderer:renderer /outputs /app/remotion/node_modules/.cache /app/.cache
+USER renderer
+ENTRYPOINT ["python", "scripts/fingerprint_smoke.py"]
+CMD ["smoke", "--output-dir", "/outputs/smoke"]

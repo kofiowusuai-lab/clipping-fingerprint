@@ -1,0 +1,16 @@
+{
+  "description": "Optional calmer readability test, not a replacement of K's approved default. Keep the same footage, timing, font and font-size ratios; compare case, accent colour and entrance only. Not an audience-tested winner.",
+  "style": "clean",
+  "headlineAccent": "#61E6FF",
+  "captionStyle": {
+    "fontSizeRatio": 0.095,
+    "position": {"bottomRatio": 0.19, "sidesRatio": 0.065},
+    "maxWords": 3,
+    "maxChars": 21,
+    "color": "#FFFFFF",
+    "activeColor": "#61E6FF",
+    "entrance": {"scale": 1, "translateY": 0, "duration": 0.133333}
+  },
+  "headlineStyle": {"topRatio": 0.075, "sidesRatio": 0.07, "fontSizeRatio": 0.075},
+  "background": {"color": "#101014", "fit": "contain", "blur": 0}
+}

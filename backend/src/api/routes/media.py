@@ -1,0 +1,507 @@
+"""
+Media API routes (fonts, transitions, uploads).
+"""
+
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi.responses import FileResponse
+from pathlib import Path
+from typing import Any, cast
+import logging
+import asyncio
+import uuid
+import aiofiles
+
+from ...config import get_config
+from ...media_storage import MediaStorage, STORAGE_ERRORS, media_work
+from ...repositories.upload_repository import reserve_upload, bind_upload, get_upload, finish_upload, UploadLimitReached
+from ...utils.async_helpers import run_in_thread
+from ...database import get_db
+from ...auth_headers import resolve_authenticated_user_id
+from ...services.billing_service import BillingService, grants_paid_access
+from starlette.formparsers import MultiPartException, MultiPartParser
+
+from ...media.upload_limits import (
+    MULTIPART_FRAMING_BYTES,
+    reject_content_length,
+    upload_too_large_detail,
+)
+from ...font_registry import (
+    FONTS_DIR,
+    SUPPORTED_FONT_EXTENSIONS,
+    build_user_font_stem,
+    find_font_path,
+    find_user_font_path,
+    get_available_fonts as list_available_fonts,
+    get_user_fonts_dir,
+    sanitize_font_stem,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends
+
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["media"])
+MAX_FONT_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+async def _get_authenticated_user_id(request: Request, db: AsyncSession) -> str:
+    config = get_config()
+    return await resolve_authenticated_user_id(request, db, config)
+
+
+async def _read_limited_upload_form(request: Request, max_bytes: int):
+    """Parse one video upload without buffering past the cap.
+
+    Starlette's default multipart parser spools a file part with no size
+    limit, so a chunked body or a spoofed short Content-Length (when the
+    server still delivers the rest) would fill the disk before the handler
+    ran. Oversized declared lengths are refused first. Everything else is
+    counted as it arrives, and a file past the cap becomes 413.
+    """
+    raw_headers = list(request.scope.get("headers") or [])
+    lengths = [
+        value.decode("latin-1").strip()
+        for name, value in raw_headers
+        if name.lower() == b"content-length"
+    ]
+    encodings = [
+        value.decode("latin-1").strip()
+        for name, value in raw_headers
+        if name.lower() == b"transfer-encoding"
+    ]
+    reason = reject_content_length(lengths, encodings, max_bytes)
+    if reason == "too_large":
+        raise HTTPException(status_code=413, detail=upload_too_large_detail(max_bytes))
+    if reason == "conflict":
+        raise HTTPException(status_code=400, detail="Conflicting upload length")
+    if reason == "malformed":
+        raise HTTPException(status_code=400, detail="A single Content-Length is required")
+
+    ceiling = max_bytes + MULTIPART_FRAMING_BYTES
+
+    async def chunks():
+        received = 0
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > ceiling:
+                raise HTTPException(status_code=413, detail=upload_too_large_detail(max_bytes))
+            yield chunk
+
+    parser = MultiPartParser(
+        request.headers,
+        chunks(),
+        max_files=1,
+        max_fields=8,
+        max_part_size=1024 * 1024,
+    )
+    try:
+        return await parser.parse()
+    except HTTPException:
+        for spool in parser._files_to_close_on_error:
+            spool.close()
+        raise
+    except MultiPartException as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from None
+    except KeyError:
+        # Starlette indexes Content-Type before it reports a multipart error.
+        raise HTTPException(status_code=400, detail="A multipart upload is required") from None
+
+
+async def _write_upload_to_disk(
+    uploaded_file: UploadFile,
+    target_path: Path,
+    max_bytes: int,
+) -> None:
+    chunk_size = 1024 * 1024
+    written = 0
+
+    try:
+        async with aiofiles.open(target_path, "wb") as destination:
+            while True:
+                chunk = await uploaded_file.read(chunk_size)
+                if not chunk:
+                    break
+
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=upload_too_large_detail(max_bytes),
+                    )
+
+                await destination.write(chunk)
+    except Exception:
+        if target_path.exists():
+            target_path.unlink(missing_ok=True)
+        raise
+
+
+@router.get("/fonts")
+async def get_available_fonts_route(
+    request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Get list of available fonts."""
+    try:
+        user_id = await _get_authenticated_user_id(request, db)
+        if not FONTS_DIR.exists():
+            return {"fonts": [], "message": "Fonts directory not found"}
+
+        # Coverage queries launch Fontconfig; keep cold scans off the API loop.
+        fonts = await asyncio.to_thread(list_available_fonts, user_id=user_id)
+        logger.info(f"Found {len(fonts)} available fonts")
+        return {"fonts": fonts}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving fonts: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving fonts: {str(e)}")
+
+
+@router.get("/fonts/{font_name}")
+async def get_font_file(
+    font_name: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db, scope="function"),
+):
+    """Serve a specific font file."""
+    try:
+        user_id = await _get_authenticated_user_id(request, db)
+        font_path = find_font_path(font_name, user_id=user_id)
+
+        if not font_path:
+            raise HTTPException(status_code=404, detail="Font not found")
+
+        media_type = "font/ttf" if font_path.suffix.lower() == ".ttf" else "font/otf"
+
+        return FileResponse(
+            path=str(font_path),
+            media_type=media_type,
+            headers={
+                "Cache-Control": "private, no-cache",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving font {font_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving font: {str(e)}")
+
+
+@router.post("/fonts/upload")
+async def upload_font(
+    request: Request,
+    uploaded_file: UploadFile = File(..., alias="file"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a custom .ttf/.otf font so it appears in the font picker."""
+    try:
+        user_id = await _get_authenticated_user_id(request, db)
+        billing_service = BillingService(db)
+        summary = await billing_service.get_usage_summary(user_id)
+        paid_access = not summary.get("monetization_enabled") or grants_paid_access(
+            summary.get("plan"),
+            summary.get("subscription_status"),
+            summary.get("subscription_provider"),
+        )
+        if not paid_access:
+            raise HTTPException(
+                status_code=403,
+                detail="Custom font uploads are available for paid plans only",
+            )
+
+        if not uploaded_file.filename:
+            raise HTTPException(status_code=400, detail="Missing file name")
+
+        uploaded_filename = uploaded_file.filename or "font.ttf"
+        extension = Path(uploaded_filename).suffix.lower()
+        if extension not in SUPPORTED_FONT_EXTENSIONS:
+            raise HTTPException(
+                status_code=400, detail="Only .ttf and .otf fonts are supported"
+            )
+
+        user_fonts_dir = get_user_fonts_dir(user_id)
+        user_fonts_dir.mkdir(parents=True, exist_ok=True)
+
+        original_stem = sanitize_font_stem(uploaded_filename)
+        stored_stem = build_user_font_stem(user_id, original_stem)
+        target_path = user_fonts_dir / f"{stored_stem}{extension}"
+        suffix = 2
+        while target_path.exists():
+            target_path = user_fonts_dir / f"{stored_stem}-{suffix}{extension}"
+            suffix += 1
+
+        await _write_upload_to_disk(uploaded_file, target_path, MAX_FONT_UPLOAD_BYTES)
+
+        logger.info(f"Uploaded font: {target_path.name}")
+
+        return {
+            "font": {
+                "name": target_path.stem,
+                "display_name": original_stem.replace("-", " ")
+                .replace("_", " ")
+                .title(),
+                "filename": target_path.name,
+                "format": extension.lstrip("."),
+                "scope": "user",
+            },
+            "message": "Font uploaded successfully",
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error uploading font: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error uploading font: {str(e)}")
+
+
+@router.delete("/fonts/{font_name}")
+async def delete_font(
+    font_name: str, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Delete a custom font owned by the authenticated user."""
+    try:
+        user_id = await _get_authenticated_user_id(request, db)
+        font_path = find_user_font_path(font_name, user_id)
+
+        if font_path is None:
+            if find_font_path(font_name) is not None:
+                raise HTTPException(
+                    status_code=403, detail="Bundled system fonts cannot be deleted"
+                )
+            raise HTTPException(status_code=404, detail="Custom font not found")
+
+        deleted_name = font_path.stem
+        font_path.unlink(missing_ok=True)
+        logger.info("Deleted custom font %s for user %s", font_path.name, user_id)
+        return {"font_name": deleted_name, "message": "Font deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error deleting font %s: %s", font_name, e)
+        raise HTTPException(status_code=500, detail=f"Error deleting font: {str(e)}")
+
+
+@router.get("/transitions")
+async def get_available_transitions():
+    """Get list of available transition effects."""
+    try:
+        from ...video_utils import get_available_transitions
+
+        transitions = get_available_transitions()
+
+        transition_info = []
+        for transition_path in transitions:
+            transition_file = Path(transition_path)
+            transition_info.append(
+                {
+                    "name": transition_file.stem,
+                    "display_name": transition_file.stem.replace("_", " ")
+                    .replace("-", " ")
+                    .title(),
+                    "file_path": transition_path,
+                }
+            )
+
+        logger.info(f"Found {len(transition_info)} available transitions")
+        return {"transitions": transition_info}
+
+    except Exception as e:
+        logger.error(f"Error retrieving transitions: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error retrieving transitions: {str(e)}"
+        )
+
+
+@router.get("/caption-templates")
+async def get_caption_templates():
+    """Get available caption templates.
+
+    Returns a stable default list if optional template module is unavailable.
+    """
+    default_templates = [
+        {
+            "id": "default",
+            "name": "Default",
+            "description": "Clean subtitle style",
+            "animation": "none",
+            "font_family": "TikTokSans-Regular",
+            "font_size": 24,
+            "font_color": "#FFFFFF",
+        }
+    ]
+
+    try:
+        from ...caption_templates import get_template_info
+
+        templates = get_template_info()
+        return {"templates": templates or default_templates}
+    except Exception:
+        return {"templates": default_templates}
+
+
+@router.get("/broll/status")
+async def get_broll_status():
+    """Return whether B-roll integrations are configured."""
+    config = get_config()
+    return {
+        "configured": bool(config.pexels_api_key),
+        "provider": "pexels" if config.pexels_api_key else None,
+    }
+
+
+@router.post("/upload")
+@media_work
+async def upload_video(request: Request, db: AsyncSession = Depends(get_db)):
+    """Upload a video to the server."""
+    try:
+        user_id = await _get_authenticated_user_id(request, db)
+        config = get_config()
+        max_bytes = config.max_video_upload_bytes
+        form_data = await _read_limited_upload_form(request, max_bytes)
+        try:
+            video_file = cast(Any, form_data.get("video"))
+
+            if not getattr(video_file, "filename", None) or not hasattr(video_file, "read"):
+                raise HTTPException(status_code=400, detail="No video file provided")
+
+            upload = cast(UploadFile, video_file)
+            upload_filename = upload.filename or "upload.mp4"
+
+            # Create uploads directory
+            uploads_dir = Path(config.temp_dir) / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate unique filename
+            file_extension = Path(upload_filename).suffix
+            unique_filename = f"{uuid.uuid4()}{file_extension}"
+            video_path = uploads_dir / unique_filename
+
+            # Save the uploaded file
+            await _write_upload_to_disk(upload, video_path, max_bytes)
+
+            storage = MediaStorage()
+            if storage.enabled:
+                session_id = None
+                try:
+                    session_id = await reserve_upload(db, user_id, video_path.stat().st_size, config)
+                    url, _ = await run_in_thread(storage.persist_source, video_path, user_id)
+                    await finish_upload(db, session_id, 'completed')
+                except BaseException:
+                    if session_id:
+                        await db.rollback()
+                        await finish_upload(db, session_id, 'aborted')
+                    raise
+                finally:
+                    video_path.unlink(missing_ok=True)
+                return {"message": "Video uploaded successfully", "video_path": url}
+
+            logger.info(f"✅ Video uploaded successfully to: {video_path}")
+
+            return {
+                "message": "Video uploaded successfully",
+                "video_path": f"upload://{unique_filename}",
+            }
+        finally:
+            await form_data.close()
+    except UploadLimitReached as exc:
+        raise HTTPException(429, str(exc)) from None
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error uploading video: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error uploading video: {str(e)}")
+
+
+@router.post("/upload/authorize")
+@media_work
+async def authorize_upload(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _get_authenticated_user_id(request, db)
+    storage = MediaStorage()
+    if not storage.enabled:
+        return {"storage": "local"}
+    try:
+        payload = await request.json()
+        size = payload.get("size")
+        if not isinstance(size, int) or isinstance(size, bool):
+            raise ValueError("A file size is required")
+        filename = payload.get("filename")
+        if not isinstance(filename, str):
+            raise ValueError("A filename is required")
+        content_type = payload.get("contentType") or "application/octet-stream"
+        if not isinstance(content_type, str) or len(content_type) > 128:
+            raise ValueError("Invalid content type")
+        session_id = await reserve_upload(db, user_id, size, storage.config)
+        authorization = {}
+        def begin():
+            # Retain the SDK result even if cancellation prevents delivery of
+            # the thread result to the awaiting handler.
+            authorization.update(storage.begin_upload(
+                user_id, filename, size, content_type, authorization=authorization))
+            return authorization
+        try:
+            await run_in_thread(begin)
+            await bind_upload(db, session_id, authorization)
+            return authorization
+        except BaseException:
+            await db.rollback()
+            if authorization:
+                try:
+                    await run_in_thread(storage.abort_upload, user_id, authorization)
+                except STORAGE_ERRORS:
+                    await bind_upload(db, session_id, authorization)
+                    raise
+            await finish_upload(db, session_id, 'aborted')
+            raise
+    except UploadLimitReached as exc:
+        raise HTTPException(429, str(exc)) from None
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.post("/upload/parts")
+async def refresh_upload_parts(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _get_authenticated_user_id(request, db)
+    try:
+        payload = await request.json()
+        session = await get_upload(db, user_id, payload)
+        return await run_in_thread(MediaStorage().refresh_upload_parts, user_id, payload, size=session.size)
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.post("/upload/complete")
+async def complete_upload(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _get_authenticated_user_id(request, db)
+    try:
+        payload = await request.json()
+        session = await get_upload(db, user_id, payload)
+        result = await run_in_thread(MediaStorage().complete_upload, user_id, payload, size=session.size)
+        await finish_upload(db, session.id, 'completed')
+        return result
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.post("/upload/abort")
+async def abort_upload(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _get_authenticated_user_id(request, db)
+    try:
+        payload = await request.json()
+        # Unknown pre-upgrade uploads can still be aborted, but never refreshed.
+        try:
+            session = await get_upload(db, user_id, payload, for_abort=True)
+        except ValueError:
+            session = None
+        from botocore.exceptions import ClientError
+        try:
+            await run_in_thread(MediaStorage().abort_upload, user_id, payload)
+        except ClientError as exc:
+            if exc.response['Error']['Code'] != 'NoSuchUpload':
+                raise
+        if session:
+            await finish_upload(db, session.id, 'aborted')
+        return {"message": "Upload cancelled"}
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from None
